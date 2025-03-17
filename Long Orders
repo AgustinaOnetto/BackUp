@@ -1,0 +1,46 @@
+-------
+-- NEW QUERY
+-------
+WITH all_mcdo_orders AS (
+    SELECT
+        DATE_FORMAT(odv2.order_dispatched_local_at, '%Y-%m-%d') AS dispatching_date,
+        DATE_FORMAT(DATE_TRUNC('week', odv2.order_dispatched_local_at), '%Y-%m-%d') AS week,
+        fom.order_estimated_purchase_local_currency AS total_products_amount,
+        ROUND(1.0 * fom.order_estimated_purchase_local_currency * 0.4, 2) AS pay_to_mcdo,
+        odv2.store_name,
+        odv2.order_code,
+        odv2.order_id,
+        odv2.store_address_id,
+        odv2.order_accepted_by_partner_at,
+        cfm.committed_preparation_time,
+        cfm.etp,
+        odv2.order_courier_arrival_to_pickup_at,
+        CASE
+            WHEN DATE_DIFF(
+                'second',
+                DATE_ADD('second', COALESCE(cfm.committed_preparation_time, cfm.etp), odv2.order_accepted_by_partner_at),
+                odv2.order_courier_arrival_to_pickup_at
+            ) > 40 * 60
+            THEN 1
+            ELSE 0
+        END AS is_long_order
+    FROM delta.central_order_descriptors_odp.order_descriptors_v2 odv2
+    LEFT JOIN delta.finance_financial_metrics_odp.financial_order_metrics fom
+        ON fom.order_id = odv2.order_id
+    LEFT JOIN delta.courier_flow_modelling_odp.preparation_time_estimations cfm
+        ON cfm.order_id = odv2.order_id
+    LEFT JOIN delta.partner__order_store_details__odp.order_details partner_ops_kpis_order_lv
+        ON partner_ops_kpis_order_lv.order_id = odv2.order_id
+    WHERE fom.partner_is_mcdonalds
+        AND odv2.order_final_status = 'DeliveredStatus'
+        AND odv2.order_courier_arrival_to_pickup_at IS NOT NULL
+        AND odv2.order_accepted_by_partner_at IS NOT NULL
+        AND fom.order_is_marketplace = FALSE
+        AND odv2.order_country_code = 'ES'
+        AND odv2.order_dispatched_local_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '7' DAY)
+        AND odv2.order_dispatched_local_at < DATE_TRUNC('week', CURRENT_DATE)
+        AND odv2.store_name LIKE '%McDo%'
+)
+SELECT *
+FROM all_mcdo_orders
+WHERE is_long_order = 1;
